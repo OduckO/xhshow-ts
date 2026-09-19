@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { CryptoConfig } from './config'
-import { CryptoProcessor, XsCommonSigner } from './core'
-import { RandomGenerator, extractUri, buildUrl } from './utils'
+import { CryptoProcessor, XsCommonSigner, buildXywPayloadHex, xRapParam } from './core'
+import { RandomGenerator, extractUri, buildUrl, getShardingKey } from './utils'
 import { SessionManager, type SignState } from './session'
 import {
   validateSignatureParams,
@@ -9,7 +9,8 @@ import {
   validatePostSignatureParams,
   validateXsCommonParams,
   type Method,
-  type Payload
+  type Payload,
+  type SignFormat
 } from './validators'
 
 export class Xhshow {
@@ -81,6 +82,7 @@ export class Xhshow {
    */
   private buildSignature (
     dValue: string,
+    mValue: string,
     a1Value: string,
     xsecAppid: string = 'xhs-pc-web',
     stringParam: string = '',
@@ -89,6 +91,7 @@ export class Xhshow {
   ): string {
     const payloadArray = this.cryptoProcessor.buildPayloadArray(
       dValue,
+      mValue,
       a1Value,
       xsecAppid,
       stringParam,
@@ -127,14 +130,65 @@ export class Xhshow {
     const signatureData = { ...this.config.SIGNATURE_DATA_TEMPLATE }
     const contentString = this.buildContentString(method, uri, payload)
     const dValue = this.generateDValue(contentString)
+    const mValue = method === 'GET'
+      ? dValue
+      : createHash('md5').update(uri, 'utf8').digest('hex')
 
-    const signState = session ? session.getCurrentState(uri) : undefined
+    const signState = session ? session.getCurrentState(contentString) : undefined
 
     signatureData.x3 = this.config.X3_PREFIX +
-      this.buildSignature(dValue, a1Value, xsecAppid, contentString, timestamp, signState)
+      this.buildSignature(dValue, mValue, a1Value, xsecAppid, contentString, timestamp, signState)
 
     const jsonStr = JSON.stringify(signatureData)
     return this.config.XYS_PREFIX + this.cryptoProcessor.b64encoder.encode(jsonStr)
+  }
+
+  /**
+   * 生成 XYW_ 格式签名（AES-128-CBC 加密）
+   *
+   * 数据获取类接口（user_posted、otherinfo 等）自 2026 年 3 月起会以 HTTP 406
+   * 拒绝传统 XYS_ 格式，此时需改用 XYW_ 格式。它使用独立于 signXs 的加密路径。
+   *
+   * @param method - HTTP 请求方法，'GET' 或 'POST'
+   * @param uri - 请求 URI 路径（可以是完整 URL）
+   * @param a1Value - Cookie 中的 a1 值
+   * @param xsecAppid - 应用 ID，默认为 'xhs-pc-web'
+   * @param payload - GET 请求的查询参数或 POST 请求的请求体
+   * @param timestamp - 可选的时间戳（秒），不传则使用当前时间
+   * @param _session - 未使用，仅为保持与 signXs 的接口一致
+   * @returns XYW_ 格式签名字符串
+   */
+  signXyw (
+    method: Method,
+    uri: string,
+    a1Value: string,
+    xsecAppid: string = 'xhs-pc-web',
+    payload: Payload = null,
+    timestamp?: number,
+    _session?: SessionManager
+  ): string {
+    validateSignatureParams(method, uri, a1Value)
+
+    uri = extractUri(uri)
+    const contentString = this.buildContentString(method, uri, payload)
+
+    const timestampMs = String(this.getXT(timestamp))
+    const payloadHex = buildXywPayloadHex({
+      fullUri: contentString,
+      a1Value,
+      timestampMs,
+      config: this.config
+    })
+
+    const xywData = {
+      signSvn: this.config.XYW_SIGN_SVN,
+      signType: this.config.XYW_SIGN_TYPE,
+      appId: xsecAppid,
+      signVersion: this.config.XYW_SIGN_VERSION,
+      payload: payloadHex
+    }
+    const xywJson = JSON.stringify(xywData)
+    return this.config.XYW_PREFIX + Buffer.from(xywJson, 'utf-8').toString('base64')
   }
 
   /**
@@ -273,6 +327,39 @@ export class Xhshow {
   }
 
   /**
+   * 生成搜索接口所需的 search_id
+   * @returns Base36 编码的搜索 ID
+   */
+  getSearchId (): string {
+    return this.randomGenerator.generateSearchId()
+  }
+
+  /**
+   * 生成搜索接口所需的 request_id
+   * @returns 格式为 "{random}-{timestamp_ms}" 的字符串
+   */
+  getSearchRequestId (): string {
+    return this.randomGenerator.generateSearchRequestId()
+  }
+
+  /**
+   * 生成 a1 Cookie 值
+   * @returns 52 字符的 a1 值
+   */
+  static generateA1 (): string {
+    return RandomGenerator.generateA1()
+  }
+
+  /**
+   * 根据 a1 值生成 web_id
+   * @param a1 - a1 Cookie 值
+   * @returns 32 字符的十六进制 web_id
+   */
+  static generateWebId (a1: string): string {
+    return RandomGenerator.generateWebId(a1)
+  }
+
+  /**
    * 生成 x-t 请求头值（Unix 时间戳，毫秒）
    * @param timestamp - 可选的时间戳（秒），不传则使用当前时间
    * @returns Unix 时间戳（毫秒）
@@ -329,7 +416,10 @@ export class Xhshow {
     params?: Record<string, any> | null,
     payload?: Record<string, any> | null,
     timestamp?: number,
-    session?: SessionManager
+    session?: SessionManager,
+    signFormat: SignFormat = 'xys',
+    userId?: string | null,
+    xRap: boolean = false
   ): Record<string, string> {
     if (timestamp === undefined) {
       timestamp = Date.now() / 1000
@@ -353,6 +443,10 @@ export class Xhshow {
       throw new Error(`Unsupported method: ${method}`)
     }
 
+    if (signFormat !== 'xys' && signFormat !== 'xyw') {
+      throw new Error(`Unsupported signFormat=${JSON.stringify(signFormat)}; expected 'xys' or 'xyw'`)
+    }
+
     const cookieDict = this.parseCookies(cookies)
 
     const a1Value = cookieDict.a1
@@ -360,19 +454,33 @@ export class Xhshow {
       throw new Error("Missing 'a1' in cookies")
     }
 
-    const xS = this.signXs(methodUpper, uri, a1Value, xsecAppid, requestData, timestamp, session)
+    const xS = signFormat === 'xyw'
+      ? this.signXyw(methodUpper, uri, a1Value, xsecAppid, requestData, timestamp)
+      : this.signXs(methodUpper, uri, a1Value, xsecAppid, requestData, timestamp, session)
+
     const xSCommon = this.signXsCommon(cookieDict)
     const xT = this.getXT(timestamp)
     const xB3Traceid = this.getB3TraceId()
     const xXrayTraceid = this.getXrayTraceId(Math.floor(timestamp * 1000))
 
-    return {
+    const headers: Record<string, string> = {
       'x-s': xS,
       'x-s-common': xSCommon,
       'x-t': String(xT),
       'x-b3-traceid': xB3Traceid,
-      'x-xray-traceid': xXrayTraceid
+      'x-xray-traceid': xXrayTraceid,
+      'x-mns': 'unload',
+      'xy-direction': String(getShardingKey(userId))
     }
+
+    if (xRap) {
+      const rapUri = extractUri(uri)
+      const rapApi = '//edith.xiaohongshu.com' + rapUri
+      const rapData = requestData || {}
+      headers['x-rap-param'] = xRapParam(rapApi, rapData)
+    }
+
+    return headers
   }
 
   /**
@@ -391,9 +499,14 @@ export class Xhshow {
     xsecAppid: string = 'xhs-pc-web',
     params?: Record<string, any> | null,
     timestamp?: number,
-    session?: SessionManager
+    session?: SessionManager,
+    signFormat: SignFormat = 'xys',
+    userId?: string | null,
+    xRap: boolean = false
   ): Record<string, string> {
-    return this.signHeaders('GET', uri, cookies, xsecAppid, params, undefined, timestamp, session)
+    return this.signHeaders(
+      'GET', uri, cookies, xsecAppid, params, undefined, timestamp, session, signFormat, userId, xRap
+    )
   }
 
   /**
@@ -412,8 +525,13 @@ export class Xhshow {
     xsecAppid: string = 'xhs-pc-web',
     payload?: Record<string, any> | null,
     timestamp?: number,
-    session?: SessionManager
+    session?: SessionManager,
+    signFormat: SignFormat = 'xys',
+    userId?: string | null,
+    xRap: boolean = false
   ): Record<string, string> {
-    return this.signHeaders('POST', uri, cookies, xsecAppid, undefined, payload, timestamp, session)
+    return this.signHeaders(
+      'POST', uri, cookies, xsecAppid, undefined, payload, timestamp, session, signFormat, userId, xRap
+    )
   }
 }

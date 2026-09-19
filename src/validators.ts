@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export type Method = 'GET' | 'POST'
 export type Payload = Record<string, any> | null
+export type SignFormat = 'xys' | 'xyw'
 
 // Schema definitions
 const methodSchema = z.enum(['GET', 'POST'], {
@@ -163,11 +164,14 @@ export class RequestSignatureValidator {
   }
 
   static validateCookie (cookie: any): Record<string, any> | string {
-    if (cookie !== null && cookie !== undefined && typeof cookie !== 'object' && typeof cookie !== 'string') {
+    if (cookie === null || cookie === undefined) {
+      throw new TypeError('cookie must be object or string, got null')
+    }
+    if (typeof cookie !== 'object' && typeof cookie !== 'string') {
       throw new TypeError(`cookie must be object or string, got ${typeof cookie}`)
     }
 
-    if (cookie !== null && cookie !== undefined && typeof cookie === 'object') {
+    if (typeof cookie === 'object') {
       for (const key of Object.keys(cookie)) {
         if (typeof key !== 'string') {
           throw new TypeError(`cookie keys must be string, got ${typeof key} for key '${key}'`)

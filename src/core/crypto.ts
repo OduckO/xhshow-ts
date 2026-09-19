@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto'
 import { CryptoConfig } from '../config'
-import { BitOperations, Base64Encoder, HexProcessor, RandomGenerator, extractApiPath } from '../utils'
+import { BitOperations, Base64Encoder, HexProcessor, RandomGenerator } from '../utils'
 import type { SignState } from '../session'
 
 export class CryptoProcessor {
@@ -90,9 +89,18 @@ export class CryptoProcessor {
 
   /**
    * Build 144-byte payload array (mns0301 version)
+   *
+   * @param hexParameter - 32-char hex (MD5 of uri+data), used for the MD5 XOR segment
+   * @param hexMd5Path - 32-char hex path hash (GET: MD5 of uri+params, POST: MD5 of uri)
+   * @param a1Value - a1 value from cookies
+   * @param appIdentifier - Application identifier, default "xhs-pc-web"
+   * @param stringParam - String parameter (URI+data, used for length calculation)
+   * @param timestamp - Unix timestamp in seconds (defaults to current time)
+   * @param signState - Optional session state
    */
   buildPayloadArray (
     hexParameter: string,
+    hexMd5Path: string,
     a1Value: string,
     appIdentifier: string = 'xhs-pc-web',
     stringParam: string = '',
@@ -175,13 +183,11 @@ export class CryptoProcessor {
     }
     payload.push(...part11)
 
-    // A3 field: API path hash (20 bytes = 4 prefix + 16 hash)
-    const apiPath = extractApiPath(stringParam)
-    const apiPathBytes = Buffer.from(apiPath, 'utf-8')
-    const hexMd5 = createHash('md5').update(apiPathBytes).digest('hex')
+    // A3 field: path hash (20 bytes = 4 prefix + 16 hash)
+    // The caller supplies the precomputed 32-char hex path hash.
     const md5PathBytes: number[] = []
     for (let i = 0; i < 32; i += 2) {
-      md5PathBytes.push(parseInt(hexMd5.substring(i, i + 2), 16))
+      md5PathBytes.push(parseInt(hexMd5Path.substring(i, i + 2), 16))
     }
 
     const a3Hash = this.customHashV2([...tsBytes, ...md5PathBytes])

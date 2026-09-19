@@ -4,8 +4,8 @@ export class CryptoConfig {
   GID_URL = 'https://as.xiaohongshu.com/api/sec/v1/shield/webprofile'
   DATA_PLATFORM = 'Windows'
   DATA_SVN = '2'
-  DATA_SDK_VERSION = '4.2.6'
-  DATA_WEB_BUILD = '5.0.3'
+  DATA_SDK_VERSION = '4.3.5'
+  DATA_WEB_BUILD = '6.3.0'
 
   // Bitwise operation constants
   MAX_32BIT = 0xFFFFFFFF
@@ -71,8 +71,14 @@ export class CryptoConfig {
   ENV_FINGERPRINT_TIME_OFFSET_MAX = 50
 
   // Signature data template
+  //
+  // 上游 v0.2.0 使用 x0="4.3.5" / x4="object"，但根据 Cloxl/xhshow issue #110
+  // (https://github.com/Cloxl/xhshow/issues/110)，该版本号已导致小红书服务器对
+  // 翻页请求（非空 cursor）静默返回空 data。实测需将版本号修正为 x0="4.4.3"、
+  // x4=""（去掉 "object"，无需 x5/x6/x7），首页与翻页均可正常返回 code=0。
+  // 上游尚未修复此问题，本 Fork 在同步 v0.2.0 的基础上额外应用此修复。
   SIGNATURE_DATA_TEMPLATE: Record<string, string> = {
-    x0: '4.2.6',
+    x0: '4.4.3',
     x1: 'xhs-pc-web',
     x2: 'Windows',
     x3: '',
@@ -82,6 +88,15 @@ export class CryptoConfig {
   // Prefix constants
   X3_PREFIX = 'mns0301_'
   XYS_PREFIX = 'XYS_'
+  XYW_PREFIX = 'XYW_'
+
+  // XYW format constants (used by data-fetching APIs to bypass 406)
+  XYW_SIGN_SVN = '56'
+  XYW_SIGN_TYPE = 'x2'
+  XYW_SIGN_VERSION = '1'
+  XYW_AES_KEY = '7cc4adla5ay0701v'
+  XYW_AES_IV = '4uzjr7mbsibcaldp'
+  XYW_ENV_FLAGS_DEFAULT = '0|0|0|1|0|0|1|0|0|0|1|0|0|0|0|1|0|0|1'
 
   // Trace ID generation constants
   HEX_CHARS = 'abcdef0123456789'
@@ -94,11 +109,14 @@ export class CryptoConfig {
   // b1 secret key
   B1_SECRET_KEY = 'xhswebmplfbt'
 
+  // x-rap-param protocol version
+  XRAP_SDK_VERSION = 10300
+
   SIGNATURE_XSCOMMON_TEMPLATE: Record<string, any> = {
     s0: 5,
     s1: '',
     x0: '1',
-    x1: '4.2.6',
+    x1: '4.3.5',
     x2: 'Windows',
     x3: 'xhs-pc-web',
     x4: '4.86.0',

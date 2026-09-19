@@ -76,7 +76,67 @@ const headers = client.signHeadersGet(
   'xhs-pc-web',
   { num: '30' }
 )
-// headers 包含: x-s, x-s-common, x-t, x-b3-traceid, x-xray-traceid
+// headers 包含: x-s, x-s-common, x-t, x-b3-traceid, x-xray-traceid, x-mns, xy-direction
+```
+
+### XYW 签名格式（数据接口绕过 HTTP 406）
+
+自 2026 年 3 月起，数据获取类接口（如 `user_posted`、`user/otherinfo` 等）会以
+HTTP 406 拒绝传统的 XYS_ 格式签名，需改用基于 AES-128-CBC 的 XYW_ 格式。通过
+`signFormat: 'xyw'` 启用：
+
+```typescript
+// 直接生成 XYW_ 签名
+const xyw = client.signXyw(
+  'GET',
+  '/api/sns/web/v1/user_posted',
+  'your_a1_cookie_value',
+  'xhs-pc-web',
+  { num: '30', cursor: '' }
+)
+
+// 或在请求头中通过 signFormat 启用（第 7 个参数）
+const headers = client.signHeadersGet(
+  '/api/sns/web/v1/user_posted',
+  { a1: 'your_a1_cookie_value', web_session: '...' },
+  'xhs-pc-web',
+  { num: '30' },
+  undefined,   // timestamp
+  undefined,   // session
+  'xyw'        // signFormat: 'xys'（默认）| 'xyw'
+)
+// 此时 headers['x-s'] 以 XYW_ 开头
+```
+
+### x-rap-param（feed / 搜索 / 发布类接口）
+
+feed、搜索、笔记发布等接口需要额外的 `x-rap-param` 请求头，通过 `xRap: true` 启用：
+
+```typescript
+const headers = client.signHeadersPost(
+  '/api/sns/web/v1/feed',
+  { a1: 'your_a1_cookie_value', web_session: '...' },
+  'xhs-pc-web',
+  { source_note_id: '...' },
+  undefined,   // timestamp
+  undefined,   // session
+  'xys',       // signFormat
+  '你的_user_id', // userId（用于 xy-direction 分片，可选）
+  true         // xRap：生成 x-rap-param
+)
+// headers 额外包含 x-rap-param
+```
+
+### 生成 Cookie 与辅助参数
+
+```typescript
+// 生成 a1 与 web_id
+const a1 = Xhshow.generateA1()          // 52 字符
+const webId = Xhshow.generateWebId(a1)  // 32 字符 hex
+
+// 搜索接口参数
+const searchId = client.getSearchId()             // base36
+const requestId = client.getSearchRequestId()     // "{random}-{timestamp_ms}"
 ```
 
 ### 使用会话管理（推荐）
@@ -135,25 +195,33 @@ const getSignature = client.signXsGet(
 
 | 方法 | 说明 |
 |------|------|
-| `signXs(method, uri, a1Value, xsecAppid?, payload?, timestamp?, session?)` | 通用签名 |
+| `signXs(method, uri, a1Value, xsecAppid?, payload?, timestamp?, session?)` | 通用签名（XYS_ 格式） |
 | `signXsGet(uri, a1Value, xsecAppid?, params?, timestamp?, session?)` | GET 请求签名 |
 | `signXsPost(uri, a1Value, xsecAppid?, payload?, timestamp?, session?)` | POST 请求签名 |
+| `signXyw(method, uri, a1Value, xsecAppid?, payload?, timestamp?)` | XYW_ 格式签名（AES-128-CBC，绕过数据接口 406） |
 | `signXsc(cookieDict)` | 生成 x-s-common 签名 |
 
 ### 请求头生成
 
 | 方法 | 说明 |
 |------|------|
-| `signHeaders(method, uri, cookies, xsecAppid?, params?, payload?, timestamp?, session?)` | 生成完整请求头 |
-| `signHeadersGet(uri, cookies, xsecAppid?, params?, timestamp?, session?)` | GET 请求头 |
-| `signHeadersPost(uri, cookies, xsecAppid?, payload?, timestamp?, session?)` | POST 请求头 |
+| `signHeaders(method, uri, cookies, xsecAppid?, params?, payload?, timestamp?, session?, signFormat?, userId?, xRap?)` | 生成完整请求头 |
+| `signHeadersGet(uri, cookies, xsecAppid?, params?, timestamp?, session?, signFormat?, userId?, xRap?)` | GET 请求头 |
+| `signHeadersPost(uri, cookies, xsecAppid?, payload?, timestamp?, session?, signFormat?, userId?, xRap?)` | POST 请求头 |
+
+参数说明：
+- `signFormat`：`'xys'`（默认）或 `'xyw'`（数据接口需用，绕过 HTTP 406）
+- `userId`：可选，提供后按 user_id 计算 `xy-direction` 分片值，否则随机
+- `xRap`：是否生成 `x-rap-param` 请求头（feed、搜索、发布类接口需要）
+
+生成的请求头包含：`x-s`、`x-s-common`、`x-t`、`x-b3-traceid`、`x-xray-traceid`、`x-mns`、`xy-direction`（`xRap: true` 时额外包含 `x-rap-param`）。
 
 ### 会话管理
 
 | 类/方法 | 说明 |
 |------|------|
 | `SessionManager` | 会话管理器类 |
-| `session.getCurrentState(uri)` | 获取当前签名状态 |
+| `session.getCurrentState(content)` | 获取当前签名状态 |
 | `session.updateState()` | 更新会话状态 |
 
 ### 工具方法
@@ -167,12 +235,17 @@ const getSignature = client.signXsGet(
 | `getB3TraceId()` | 生成 x-b3-traceid |
 | `getXrayTraceId(timestamp?, seq?)` | 生成 x-xray-traceid |
 | `getXT(timestamp?)` | 生成 x-t 时间戳 |
+| `getSearchId()` | 生成搜索接口 search_id（base36） |
+| `getSearchRequestId()` | 生成搜索接口 request_id |
+| `Xhshow.generateA1()` | 生成 a1 Cookie 值（52 字符，静态方法） |
+| `Xhshow.generateWebId(a1)` | 由 a1 生成 web_id（32 字符 hex，静态方法） |
 
 ## 类型定义
 
 ```typescript
 type Method = 'GET' | 'POST'
 type Payload = Record<string, any> | null
+type SignFormat = 'xys' | 'xyw'
 
 interface SignState {
   pageLoadTimestamp: number
@@ -184,17 +257,18 @@ interface SignState {
 class SessionManager {
   constructor(config?: CryptoConfig)
   updateState(): void
-  getCurrentState(uri: string): SignState
+  getCurrentState(content: string): SignState
 }
 
 interface Xhshow {
   signXs(method: Method, uri: string, a1Value: string, xsecAppid?: string, payload?: Payload, timestamp?: number, session?: SessionManager): string
   signXsGet(uri: string, a1Value: string, xsecAppid?: string, params?: Payload, timestamp?: number, session?: SessionManager): string
   signXsPost(uri: string, a1Value: string, xsecAppid?: string, payload?: Payload, timestamp?: number, session?: SessionManager): string
+  signXyw(method: Method, uri: string, a1Value: string, xsecAppid?: string, payload?: Payload, timestamp?: number, session?: SessionManager): string
   signXsc(cookieDict: Record<string, any> | string): string
-  signHeaders(method: Method, uri: string, cookies: Record<string, any> | string, xsecAppid?: string, params?: Payload, payload?: Payload, timestamp?: number, session?: SessionManager): Record<string, string>
-  signHeadersGet(uri: string, cookies: Record<string, any> | string, xsecAppid?: string, params?: Payload, timestamp?: number, session?: SessionManager): Record<string, string>
-  signHeadersPost(uri: string, cookies: Record<string, any> | string, xsecAppid?: string, payload?: Payload, timestamp?: number, session?: SessionManager): Record<string, string>
+  signHeaders(method: Method, uri: string, cookies: Record<string, any> | string, xsecAppid?: string, params?: Payload, payload?: Payload, timestamp?: number, session?: SessionManager, signFormat?: SignFormat, userId?: string | null, xRap?: boolean): Record<string, string>
+  signHeadersGet(uri: string, cookies: Record<string, any> | string, xsecAppid?: string, params?: Payload, timestamp?: number, session?: SessionManager, signFormat?: SignFormat, userId?: string | null, xRap?: boolean): Record<string, string>
+  signHeadersPost(uri: string, cookies: Record<string, any> | string, xsecAppid?: string, payload?: Payload, timestamp?: number, session?: SessionManager, signFormat?: SignFormat, userId?: string | null, xRap?: boolean): Record<string, string>
   decodeXs(xsSignature: string): Record<string, any>
   decodeX3(x3Signature: string): Uint8Array
   buildUrl(baseUrl: string, params?: Record<string, any> | null): string
@@ -202,7 +276,13 @@ interface Xhshow {
   getB3TraceId(): string
   getXrayTraceId(timestamp?: number, seq?: number): string
   getXT(timestamp?: number): number
+  getSearchId(): string
+  getSearchRequestId(): string
 }
+
+// 静态方法
+Xhshow.generateA1(): string
+Xhshow.generateWebId(a1: string): string
 ```
 
 ## 开发

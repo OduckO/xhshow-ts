@@ -4,7 +4,7 @@
   "description": "XHS API signature generator",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
-  "types": "dist/index.d.mts",
+  "types": "dist/index.d.ts",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,11 +13,11 @@
   "exports": {
     ".": {
       "import": {
-        "types": "./dist/index.d.mts",
+        "types": "./dist/index.d.ts",
         "default": "./dist/index.mjs"
       },
       "require": {
-        "types": "./dist/index.d.cts",
+        "types": "./dist/index.d.ts",
         "default": "./dist/index.cjs"
       }
     }
@@ -41,13 +41,13 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "25.3.2",
+    "@types/node": "24.10.15",
     "axios": "npm:@karinjs/axios@^1.13.2",
-    "tsdown": "^0.20.3",
-    "tsx": "^4.21.0",
-    "typescript": "5.9.3"
+    "tsdown": "^0.23.0",
+    "tsx": "^4.23.13",
+    "typescript": "7.0.2"
   },
   "dependencies": {
-    "zod": "^4.1.12"
+    "zod": "^4.6.5"
   }
 }

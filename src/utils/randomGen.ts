@@ -1,4 +1,46 @@
+import { createHash } from 'node:crypto'
 import { CryptoConfig } from '../config'
+
+const BASE36_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
+const A1_CHARSET = 'abcdefghijklmnopqrstuvwxyz1234567890'
+
+// Standard CRC32 (IEEE 802.3, poly 0xEDB88320), matching Python binascii.crc32
+let STD_CRC32_TABLE: number[] | null = null
+function stdCrc32 (bytes: Uint8Array | Buffer): number {
+  if (STD_CRC32_TABLE === null) {
+    const tbl: number[] = new Array(256)
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? ((c >>> 1) ^ 0xEDB88320) : (c >>> 1)
+      }
+      tbl[n] = c >>> 0
+    }
+    STD_CRC32_TABLE = tbl
+  }
+  let crc = 0xFFFFFFFF
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (STD_CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) >>> 0
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0
+}
+
+/**
+ * Convert a non-negative BigInt to a base36 string.
+ */
+function intToBase36 (value: bigint): string {
+  if (value === 0n) {
+    return '0'
+  }
+  let result = ''
+  const base = 36n
+  while (value > 0n) {
+    const remainder = value % base
+    value = value / base
+    result = BASE36_CHARS[Number(remainder)] + result
+  }
+  return result
+}
 
 export class RandomGenerator {
   private config: CryptoConfig
@@ -63,5 +105,55 @@ export class RandomGenerator {
     }
 
     return part1 + part2
+  }
+
+  /**
+   * Generate a random ASCII string of the given length
+   */
+  static generateRandomAscii (length: number, charset: string = 'abcdefghijklmnopqrstuvwxyz0123456789'): string {
+    let result = ''
+    for (let i = 0; i < length; i++) {
+      result += charset[Math.floor(Math.random() * charset.length)]
+    }
+    return result
+  }
+
+  /**
+   * Generate an a1 cookie value (52 characters)
+   */
+  static generateA1 (): string {
+    const tsHex = Math.floor(Date.now()).toString(16)
+    let randomStr = ''
+    for (let i = 0; i < 30; i++) {
+      randomStr += A1_CHARSET[Math.floor(Math.random() * A1_CHARSET.length)]
+    }
+    const aPart = tsHex + randomStr + '5' + '0' + '000'
+    const crc = stdCrc32(Buffer.from(aPart)) >>> 0
+    return (aPart + String(crc)).slice(0, 52)
+  }
+
+  /**
+   * Generate web_id (32-character hex MD5) from an a1 cookie value
+   */
+  static generateWebId (a1: string): string {
+    return createHash('md5').update(a1).digest('hex')
+  }
+
+  /**
+   * Generate search_id for search endpoints (base36 of (timestamp_ms << 64) + random)
+   */
+  generateSearchId (): string {
+    const timestampMs = BigInt(Date.now())
+    const randomPart = BigInt(Math.ceil(0x7FFFFFFE * Math.random()))
+    return intToBase36((timestampMs << 64n) + randomPart)
+  }
+
+  /**
+   * Generate search request_id for search endpoints. Format: "{random}-{timestamp_ms}"
+   */
+  generateSearchRequestId (): string {
+    const timestampMs = Date.now()
+    const randomPart = Math.ceil(0x7FFFFFFE * Math.random())
+    return `${randomPart}-${timestampMs}`
   }
 }
