@@ -127,6 +127,37 @@ const headers = client.signHeadersPost(
 // headers 额外包含 x-rap-param
 ```
 
+### 签名默认值与会话时间
+
+根据 2026-09-20 提供的浏览器抓包记录，默认 `x-s-common` 使用 `x1=4.4.3`、
+`x4=6.53.4`，`x-rap-param` 使用 SDK 协议版本 `10301`。
+
+`x-s-common` 的 `x12` 格式为 `请求时间戳;会话起始时间戳`（毫秒）。第一段在每次
+生成签名时刷新；第二段默认使用模块加载时间，同一模块的多个客户端实例共享此值。
+这是无法获知 Cookie 实际创建时间时的回退值，与 `SessionManager` 的状态独立。
+
+如需使用调用方管理的会话起始时间，可保留动态 getter 覆盖模板。只展开模板会把
+`x12` 求值为当前字符串，因此自定义模板时应重新定义 getter，避免冻结请求时间：
+
+```typescript
+import { CryptoConfig, Xhshow } from '@ikenxuan/xhshow-ts'
+
+const defaults = new CryptoConfig()
+const sessionStartMs = Date.now() // 替换为调用方保存的会话起始时间
+const config = defaults.withOverrides({
+  SIGNATURE_XSCOMMON_TEMPLATE: {
+    ...defaults.SIGNATURE_XSCOMMON_TEMPLATE,
+    get x12 () {
+      return `${Date.now()};${sessionStartMs}`
+    }
+  }
+})
+const client = new Xhshow(config)
+```
+
+直接调用 `xRapParam(api, data, { sdkVersion })` 仍可覆盖 XRAP 协议版本。签名默认值
+更新后需重新执行 `pnpm build`；包的 ESM/CJS 入口均从 `dist` 加载构建产物。
+
 ### 生成 Cookie 与辅助参数
 
 ```typescript
@@ -297,6 +328,12 @@ pnpm install
 
 # 开发模式
 pnpm dev
+
+# 回归测试
+pnpm test
+
+# 类型检查
+pnpm exec tsc --noEmit
 
 # 构建
 pnpm build

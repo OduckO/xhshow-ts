@@ -1,3 +1,6 @@
+// Fallback session start for x-s-common, shared by this loaded module.
+const XHS_SESSION_START_MS = Date.now()
+
 export class CryptoConfig {
   // Gid encrypt parameters
   DES_KEY = 'zbp30y86'
@@ -109,24 +112,28 @@ export class CryptoConfig {
   // b1 secret key
   B1_SECRET_KEY = 'xhswebmplfbt'
 
-  // x-rap-param protocol version
-  XRAP_SDK_VERSION = 10300
+  // x-rap-param protocol version from the 2026-09-20 browser capture
+  XRAP_SDK_VERSION = 10301
 
   SIGNATURE_XSCOMMON_TEMPLATE: Record<string, any> = {
     s0: 5,
     s1: '',
     x0: '1',
-    x1: '4.3.5',
+    x1: '4.4.3',
     x2: 'Windows',
     x3: 'xhs-pc-web',
-    x4: '4.86.0',
+    x4: '6.53.4',
     x5: '',
     x6: '',
     x7: '',
     x8: '',
     x9: -596800761,
     x10: 0,
-    x11: 'normal'
+    x11: 'normal',
+    // Object spread in XsCommonSigner evaluates this for every signature.
+    get x12 () {
+      return `${Date.now()};${XHS_SESSION_START_MS}`
+    }
   }
 
   PUBLIC_USERAGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0'
