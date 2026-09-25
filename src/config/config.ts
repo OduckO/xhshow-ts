@@ -85,11 +85,13 @@ export class CryptoConfig {
 
   // Signature data template
   //
-  // 上游 v0.2.0 使用 x0="4.3.5" / x4="object"，但根据 Cloxl/xhshow issue #110
+  // 上游 v0.2.0 使用 x0="4.3.5"，根据 Cloxl/xhshow issue #110
   // (https://github.com/Cloxl/xhshow/issues/110)，该版本号已导致小红书服务器对
-  // 翻页请求（非空 cursor）静默返回空 data。实测需将版本号修正为 x0="4.4.3"、
-  // x4=""（去掉 "object"，无需 x5/x6/x7），首页与翻页均可正常返回 code=0。
-  // 上游尚未修复此问题，本 Fork 在同步 v0.2.0 的基础上额外应用此修复。
+  // 翻页请求（非空 cursor）静默返回空 data，需修正为 x0="4.4.3"。
+  //
+  // 这里只放 x0~x4 的默认值。签名时 signXs 会按前端 seccore_signv2 补齐其余字段：
+  // x4 = POST 为 'object'、GET 为 ''；x5 = 签名内容串的 MD5；会话带 webSsk 时
+  // 再加 x6/x7（见 core/ssk.ts）。2026-09-25 对页面自己签出的 21 条 XYS_ 逐字节核对一致。
   SIGNATURE_DATA_TEMPLATE: Record<string, string> = {
     x0: '4.4.3',
     x1: 'xhs-pc-web',
@@ -97,6 +99,10 @@ export class CryptoConfig {
     x3: '',
     x4: ''
   }
+
+  // webSsk 交换用的服务端 X25519 公钥（前端 vendor-dynamic.js 里的常量），
+  // 传给 createWebSskExchange。
+  SSK_SERVER_PUBLIC_KEY = 'Kr0iygsCu3inYJNXCL4k4JuzaYQ2afI1xbwc7BH6sm8='
 
   // Prefix constants
   X3_PREFIX = 'mns0301_'
