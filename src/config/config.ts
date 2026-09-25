@@ -1,3 +1,10 @@
+import {
+  getPlatformCode,
+  platformFromUserAgent,
+  XHS_PLATFORM_FALLBACK,
+  XYW_ENV_FLAGS_BROWSER
+} from './platform'
+
 // Fallback session start for x-s-common, shared by this loaded module.
 const XHS_SESSION_START_MS = Date.now()
 
@@ -8,7 +15,10 @@ export class CryptoConfig {
   DATA_PLATFORM = 'Windows'
   DATA_SVN = '2'
   DATA_SDK_VERSION = '4.3.5'
-  DATA_WEB_BUILD = '6.3.0'
+  // 站点构建号，下游拿它铸 webBuild Cookie。x-s-common 的 x4 与它同源，
+  // 所以 XsCommonSigner 会优先读 Cookie 里的 webBuild，这里只是兜底默认值。
+  // 2026-09-25 真机实测为 6.56.3（此前钉的 6.3.0 已过期）。
+  DATA_WEB_BUILD = '6.56.3'
 
   // Bitwise operation constants
   MAX_32BIT = 0xFFFFFFFF
@@ -99,7 +109,10 @@ export class CryptoConfig {
   XYW_SIGN_VERSION = '1'
   XYW_AES_KEY = '7cc4adla5ay0701v'
   XYW_AES_IV = '4uzjr7mbsibcaldp'
-  XYW_ENV_FLAGS_DEFAULT = '0|0|0|1|0|0|1|0|0|0|1|0|0|0|0|1|0|0|1'
+  // 真实（非自动化）浏览器的 19 位环境标志。此前这里最后一位是 1，与真机不符；
+  // 2026-09-25 真机 Edge 153 实测为下面这串。第 11 位测的是 webdriver 而非平台，
+  // 所以这一串不随 OS 变 —— 详见 ./platform.ts 里 XYW_ENV_FLAGS_BROWSER 的说明。
+  XYW_ENV_FLAGS_DEFAULT = XYW_ENV_FLAGS_BROWSER
 
   // Trace ID generation constants
   HEX_CHARS = 'abcdef0123456789'
@@ -115,14 +128,22 @@ export class CryptoConfig {
   // x-rap-param protocol version from the 2026-09-20 browser capture
   XRAP_SDK_VERSION = 10301
 
+  // x-rap-param 分组密码的 16 字节主密钥。它经标准 AES-128 密钥展开（S 盒换成
+  // xrap.ts 里那张自定义表）即可推出全部 11 组轮密钥，见 expandXrapKey。
+  // 平台轮换密钥时改这 16 字节即可，不必重新逆常量池。
+  XRAP_MASTER_KEY = 'kqI1DTcwKX90ZtAy'
+
   SIGNATURE_XSCOMMON_TEMPLATE: Record<string, any> = {
+    // s0 与 x2 是平台派生值，不是常量：这里的默认值对应 Windows
+    // （Windows 在前端 getPlatformCode 里落到 other=5）。换平台请用 forUserAgent()。
     s0: 5,
     s1: '',
     x0: '1',
     x1: '4.4.3',
     x2: 'Windows',
     x3: 'xhs-pc-web',
-    x4: '6.53.4',
+    // 2026-09-25 真机 Edge 153 登录态实测；此前钉的 6.53.4 已过期
+    x4: '6.56.3',
     x5: '',
     x6: '',
     x7: '',
@@ -145,5 +166,51 @@ export class CryptoConfig {
     const newConfig = new CryptoConfig()
     Object.assign(newConfig, overrides)
     return newConfig
+  }
+
+  /**
+   * 按 UA 派生出平台相关的那几个字段，返回新实例（不改动当前实例）。
+   *
+   * 会跟着 UA 变的只有三处，都经真机验证过是平台绑定的：
+   *
+   * - `SIGNATURE_XSCOMMON_TEMPLATE.s0` —— 复刻前端 `getPlatformCode`，
+   *   Windows 落 `other`(5)、Mac OS 是 3、Linux 是 4、iOS 1、Android 2
+   * - `SIGNATURE_XSCOMMON_TEMPLATE.x2` 与 `SIGNATURE_DATA_TEMPLATE.x2` ——
+   *   平台名字符串，认不出时用前端的兜底值 `'PC'`
+   * - `DATA_PLATFORM` —— webprofile（gid）请求体里的平台名
+   * - `PUBLIC_USERAGENT` —— b1 指纹直接把 UA 写进 `fingerprint.x1`，必须跟着一起换
+   *
+   * `XYW_ENV_FLAGS_DEFAULT` 刻意**不**跟着 UA 变：那 19 位里唯一观测到会变的是
+   * webdriver 位，与 OS 无关，详见 `./platform.ts`。
+   *
+   * 与 {@link withOverrides} 可组合，后者优先：
+   * ```ts
+   * new CryptoConfig().forUserAgent(ua).withOverrides({ DATA_WEB_BUILD: '6.12.3' })
+   * ```
+   * @param userAgent - 实际发请求用的 UA；认不出平台时退回 `'PC'`
+   * @returns 平台字段已就位的新配置实例
+   */
+  forUserAgent (userAgent?: string): CryptoConfig {
+    const platform = platformFromUserAgent(userAgent)
+    const platformName = platform ?? XHS_PLATFORM_FALLBACK
+    const field = (value: unknown): PropertyDescriptor => ({ value, enumerable: true, writable: true, configurable: true })
+
+    // 按属性描述符复制：SIGNATURE_XSCOMMON_TEMPLATE.x12 是 getter，
+    // 用对象展开会把它求值成一个固定字符串，请求时间就不再每次刷新了。
+    const xsCommonTemplate = Object.defineProperties({}, {
+      ...Object.getOwnPropertyDescriptors(this.SIGNATURE_XSCOMMON_TEMPLATE),
+      s0: field(getPlatformCode(platform)),
+      x2: field(platformName)
+    }) as Record<string, any>
+
+    return this.withOverrides({
+      ...this,
+      // b1 指纹里直接带 UA（fingerprint.x1），不一起换的话会出现
+      // 「s0/x2 说 Mac、指纹说 Windows」这种自相矛盾的签名。
+      ...(userAgent ? { PUBLIC_USERAGENT: userAgent } : {}),
+      DATA_PLATFORM: platformName,
+      SIGNATURE_DATA_TEMPLATE: { ...this.SIGNATURE_DATA_TEMPLATE, x2: platformName },
+      SIGNATURE_XSCOMMON_TEMPLATE: xsCommonTemplate
+    })
   }
 }
