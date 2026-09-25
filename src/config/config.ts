@@ -67,13 +67,18 @@ export class CryptoConfig {
   // Checksum constants (16 bytes total)
   CHECKSUM_VERSION = 1
   CHECKSUM_XOR_KEY = 115
-  CHECKSUM_FIXED_TAIL = [249, 65, 103, 103, 201, 181, 131, 99, 94, 7, 68, 250, 132, 21]
+  CHECKSUM_FIXED_TAIL = [249, 65, 103, 103, 201, 181, 129, 99, 94, 7, 68, 250, 132, 21]
 
   // Environment detection constants (15 values for part11 XOR)
   ENV_TABLE = [115, 248, 83, 102, 103, 201, 181, 131, 99, 94, 4, 68, 250, 132, 21]
 
   // Default environment check values (normal browser)
-  ENV_CHECKS_DEFAULT = [0, 1, 18, 1, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0]
+  //
+  // 2026-09-26 解开页面自己签出的 x3：页面刚加载时依次用 mns0201_ / mns0101_ 档位，
+  // env 尾部也不同；约 1 秒后稳定在 mns0301_，尾部为
+  // f9 41 67 67 c9 b5 81 63 5e 07 44 fa 84 15，对应这里第 7 位为 2（旧值 0）。
+  // 另一批探针样本里第 5 位是 1（原因未查明），这里取上述会话里的 0。
+  ENV_CHECKS_DEFAULT = [0, 1, 18, 1, 0, 0, 0, 2, 0, 0, 3, 0, 0, 0, 0]
 
   // custom_hash_v2 initial vector
   HASH_IV: [number, number, number, number] = [1831565813, 461845907, 2246822507, 3266489909]

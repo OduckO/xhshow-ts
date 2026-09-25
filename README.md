@@ -212,13 +212,18 @@ const headers2 = client.signHeadersGet(
 | 字段 | 含义 |
 |------|------|
 | `x0` / `x1` / `x2` | 签名版本 `4.4.3` / 应用 ID / 平台名（随 `forUserAgent` 变） |
-| `x3` | mnsv2 签名 |
+| `x3` | mnsv2 签名（`mns0301_` 档位，明文布局见下） |
 | `x4` | 请求体类型：POST 为 `'object'`，GET 为 `''` |
 | `x5` | 签名内容串（URI + 查询串或 JSON 请求体）的 MD5 |
 | `x6` / `x7` | 会话 SSK 证明，按 appId 分键：`x7 = nonce(4) ‖ sha1(ssk ‖ nonce) ‖ ssk[32:]`，`x6 = sha1(md5 ‖ x7)` |
 
 x4~x7 已与页面自己签出的 21 条 `XYS_` 逐字节核对一致；登录态下
 homefeed、评论翻页、子评论在带与不带 x4~x7 时均正常返回。服务端目前不强制 x6/x7。
+
+x3 解密后是 144 字节明文，2026-09-26 与页面签出的 20 条 x3 逐字段核对：内容 MD5 段为
+`md5(内容)[0:8]`，a3 段为 `dsf(le64(时间戳) ‖ md5(URI))`，两者都逐字节异或版本字段的低字节；
+env 尾部取页面稳定后的值。页面刚加载的约 1 秒里会先用 `mns0201_` / `mns0101_` 档位，
+这里只生成稳定后的 `mns0301_`。
 
 SSK 可以直接从浏览器 `localStorage.getItem('webSsk')` 复制：
 

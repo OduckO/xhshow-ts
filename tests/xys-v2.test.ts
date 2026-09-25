@@ -84,6 +84,53 @@ test('signXs adds x6/x7 bound to x5 when the session carries webSsk', () => {
   assert.equal('x6' in cleared, false)
 })
 
+// 与 xhshow 内部 customHashV2 相互独立的一份 dsf，照 Spider_XHS mns.js 写
+function dsf (data: number[]): Buffer {
+  const rotl = (x: number, r: number) => ((x << r) | (x >>> (32 - r))) | 0
+  const rd = (o: number) => data[o] | (data[o + 1] << 8) | (data[o + 2] << 16) | (data[o + 3] << 24)
+  const len = data.length
+  let h1 = 0x6d2b79f5 ^ len; let h2 = 0x1b873593 ^ (len << 8)
+  let h3 = 0x85ebca6b ^ (len << 16); let h4 = 0xc2b2ae35 ^ (len << 24)
+  for (let i = 0; i + 8 <= len; i += 8) {
+    h1 = rotl(((h1 + rd(i)) | 0) ^ h3, 7)
+    h2 = rotl(((h2 ^ rd(i)) + h4) | 0, 11)
+    h3 = rotl(((h3 + rd(i + 4)) | 0) ^ h1, 13)
+    h4 = rotl(((h4 ^ rd(i + 4)) + h2) | 0, 17)
+  }
+  h1 ^= len; h2 ^= h1; h3 = (h3 + h2) | 0; h4 ^= h3
+  h1 = rotl(h1, 9); h2 = rotl(h2, 13); h3 = rotl(h3, 17); h4 = rotl(h4, 19)
+  h1 = (h1 + h3) | 0; h2 ^= h4; h3 = (h3 + h1) | 0; h4 ^= h2
+  const out = Buffer.alloc(16)
+  ;[h1, h2, h3, h4].forEach((h, i) => out.writeInt32LE(h, i * 4))
+  return out
+}
+
+test('x3 plaintext follows the browser mns0301 layout', () => {
+  // 字段口径与 2026-09-26 页面自己签出的 20 条 x3 解密结果一致
+  const client = new Xhshow()
+  const body = { note_id: 'abc', num: 10 }
+  const content = '/api/sns/web/v1/feed' + JSON.stringify(body)
+  const x3 = client.decodeXs(client.signXsPost('/api/sns/web/v1/feed', A1, 'xhs-pc-web', body)).x3 as string
+  assert.ok(x3.startsWith('mns0301_'))
+
+  const p = Buffer.from(client.decodeX3(x3))
+  const key = p[4]
+  const xorKey = (buf: Buffer) => Buffer.from(buf.map(b => b ^ key))
+  assert.deepEqual([...p.subarray(0, 4)], [121, 104, 96, 41])
+  assert.equal(p.readUInt32LE(32), Buffer.byteLength(content))
+  assert.deepEqual(xorKey(p.subarray(36, 44)), createHash('md5').update(content).digest().subarray(0, 8))
+
+  const env = p.subarray(108, 124)
+  assert.equal(env[0], 1)
+  assert.equal(env[1], key ^ 115)
+  assert.equal(env.subarray(2).toString('hex'), 'f9416767c9b581635e0744fa8415')
+
+  // a3：dsf(le64(ts) ‖ md5(uri)) 逐字节异或版本低字节
+  assert.deepEqual([...p.subarray(124, 128)], [2, 97, 51, 16])
+  const dsfIn = [...p.subarray(8, 16), ...createHash('md5').update('/api/sns/web/v1/feed').digest()]
+  assert.deepEqual(xorKey(p.subarray(128, 144)), dsf(dsfIn))
+})
+
 test('createWebSskExchange decrypts what a simulated server issues', () => {
   const server = generateKeyPairSync('x25519')
   const serverRaw = Buffer.from(server.publicKey.export({ format: 'jwk' }).x as string, 'base64url')
